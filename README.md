@@ -5,6 +5,6 @@ To Ensure Repo Access, edit this file with your name. If you're the last person 
 Project Members:
 - Ezekiel Boggs
 - Jace Bennett
-- Your Name Here
+- Jameson Wells
 - Your Name Here
 - Your Name Here
