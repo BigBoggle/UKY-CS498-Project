@@ -6,5 +6,5 @@ Project Members:
 - Ezekiel Boggs
 - Jace Bennett
 - Jameson Wells
-- Your Name Here
+- Andrew Hostettler
 - Your Name Here
