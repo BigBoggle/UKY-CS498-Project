@@ -1,2 +1,4 @@
 
-As a user who wants to see what horse is favored to win in the next Keeland race, so that I can bet on it.
+As a user who wants to see what horse is favored to win in the next Keeneland race, so that I can bet on it.
+
+As an administrator I want to paywall the website so that users need a subscription to see the content.
