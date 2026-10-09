@@ -7,4 +7,13 @@ Project Members:
 - Jace Bennett
 - Jameson Wells
 - Andrew Hostettler
-- Your Name Here
+- Nathan Herrington 
+
+
+## Environment Setup
+
+```shell
+# All of the Dependencies are in the pyproject.toml
+pip install -e .
+
+```

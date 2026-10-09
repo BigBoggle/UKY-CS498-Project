@@ -1,0 +1,9 @@
+[project]
+name = "SomeProject"
+version = "0.0.1"
+requires-python = ">=3.11"
+
+
+dependencies = [
+    "flask>=3.1,<4",
+]
