@@ -1,9 +1,11 @@
 Jameson:
   As a user who wants to see what horse is favored to win in the next Keeneland race, so that I can bet on it.
-
   As an administrator I want to paywall the website so that users need a subscription to see the content.
 
 Andrew:
   As a developer I want to have the ability to scrape data that I may need if I cannot get easy access to data in the form of a .csv or sql database.
-
   As a user, I want to have the ability to get a free trial of some sorts before I commit to paying for the content.
+  As a user I want to see what horse is most likely to win in the next Keeneland race, so that I can bet on it.
+
+  As an employee I want to be able to monitor activity on the website so that I will be able to act timely if there is an error with anything on the website.
+  As a user I want to be able to see proper probable predictions on what horses to bet on, so that I can make quick money without the large risk of gambling.
