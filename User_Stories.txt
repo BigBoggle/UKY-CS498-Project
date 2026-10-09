@@ -13,5 +13,9 @@ Jace:
 
 Zeke: 
   As a developer, I want the ability to query historical results and statistics cached in a database to recommend users the most likely odds for a race.
-  As a a user, I want to have the ability to view historical data in addition to the site's recommendations to decide how I want to bet.
+  As a user, I want to have the ability to view historical data in addition to the site's recommendations to decide how I want to bet.
   As a user, I want to be able to see figures and charts to make better bets based on statistics.
+
+Nathan:
+  As a user, I want to see trends and data that compare the racers not just favored racers, in order to have a more informed bet.
+  As an administrator I want to be able paywall some convenient features so that users need a subscription to use them.
