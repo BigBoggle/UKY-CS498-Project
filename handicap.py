@@ -70,6 +70,12 @@ SPRINT_V9 = dict(SPRINT,  # class upweighted
 TRAINER_TIER = {  # fraction of max trainer points; edit freely
     "baffert": 1.0, "pletcher": 1.0, "brown": 1.0, "c.brown": 1.0, "cox": 1.0,
     "mott": 0.9, "ward": 0.9, "asmussen": 0.8, "d. ryan": 0.8, "sharp": 0.8,
+    # --- added: tiers are judgment calls, not computed from stats ---
+    "joseph": 0.9, "casse": 0.9, "mcgaughey": 0.9, "mcpeek": 0.9,
+    "motion": 0.8, "clement": 0.8, "romans": 0.8, "amoss": 0.8, "maker": 0.8,
+    "sadler": 0.8, "mandella": 0.8, "miller": 0.8, "d'amato": 0.8,
+    "hollendorfer": 0.8, "o'neill": 0.8, "devaux": 0.8, "weaver": 0.8,
+    "rice": 0.8, "brisset": 0.8, "walsh": 0.8, "mccarthy": 0.8,
 }
 
 # --------------------------------------------------------------------------
