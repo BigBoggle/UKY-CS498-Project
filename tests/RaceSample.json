@@ -1,0 +1,22 @@
+{
+  "name": "Belmont S. G1",
+  "distance_f": 10,
+  "surface": "dirt",
+  "horses": [
+    {
+      "name": "Renegade",
+      "pp": 4,
+      "pl": 2.5,
+      "style": "S",
+      "trainer": "Pletcher",
+      "ep1": 75,
+      "lp": 105,
+      "avgspd": 97,
+      "avgdist": 98,
+      "bestspd": 98,
+      "primepower": 150,
+      "lastclass": 122,
+      "avgclass": 121,
+    },
+  ],
+}
