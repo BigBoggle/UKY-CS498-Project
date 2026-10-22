@@ -6,11 +6,7 @@ Usage:
     python handicap.py                    # Belmont S. demo -> JSON (v8)
     python handicap.py race.json          # scores a race from a JSON file -> JSON
     python handicap.py race.json --v9     # same, using the v9 shadow model
-    python handicap.py race.json --text   # printed table + confidence instead of JSON
-
-Each output row also carries a race-level confidence score (0-100) and label
-(HIGH / MEDIUM / LOW): how much to trust the top pick. It is a heuristic, NOT a
-calibrated win probability; backtest the thresholds before relying on the labels.
+    python handicap.py race.json --text   # old printed table instead of JSON
 
 Race JSON shape:
 {
@@ -374,90 +370,49 @@ DEMO = {
 # NOTE: this is a heuristic conversion, NOT a calibrated probability. To make it
 # honest, fit T against past results (pick T that minimizes log-loss).
 # --------------------------------------------------------------------------
+import math
+
 PROB_TEMPERATURE = 8.0
 
-class Pick(NamedTuple):
-    """One horse's place in a scored race."""
-    rank: int
-    name: str
-    score: float
-    prob: float
-
 def win_probabilities(scores, temp=PROB_TEMPERATURE):
-    """Softmax of the scores at temperature temp; returns probabilities summing to 1."""
     top = max(scores)  # subtract max for numeric stability
     exps = [math.exp((s - top) / temp) for s in scores]
     total = sum(exps)
     return [e / total for e in exps]
 
-def col_predicted_rank(pick):
-    """Column: predicted finishing rank (1 = predicted winner)."""
-    return pick.rank
+def col_win_probability(prob):         return round(prob, 4)
+def col_is_predicted_winner(rank):     return rank == 1
+def col_predicted_rank(rank):          return rank
 
-def col_is_predicted_winner(pick):
-    """Column: True for the top-ranked horse."""
-    return pick.rank == 1
-
-def col_score(pick):
-    """Column: total score on the 0-100 scale, one decimal."""
-    return round(pick.score, 1)
-
-def col_win_probability(pick):
-    """Column: softmax win probability, 4 decimals."""
-    return round(pick.prob, 4)
-
-def col_confidence_score(conf):
-    """Column: race-level confidence score (0-100)."""
-    return conf["score"]
-
-def col_confidence_label(conf):
-    """Column: race-level confidence label (HIGH / MEDIUM / LOW)."""
-    return conf["label"]
-
-def build_row(race, version, kind, pick, conf):
-    """Build one flat output row for a horse."""
+def build_row(race, version, kind, rank, name, score, prob):
     return {
         "race_name": race["name"],
         "distance_f": race["distance_f"],
         "surface": race.get("surface", "dirt"),
         "formula": kind,
         "version": version,
-        "horse": pick.name,
-        "predicted_rank": col_predicted_rank(pick),
-        "is_predicted_winner": col_is_predicted_winner(pick),
-        "score": col_score(pick),
-        "win_probability": col_win_probability(pick),
-        "confidence_score": col_confidence_score(conf),
-        "confidence_label": col_confidence_label(conf),
+        "horse": name,
+        "predicted_rank": col_predicted_rank(rank),
+        "is_predicted_winner": col_is_predicted_winner(rank),
+        "score": round(score, 1),
+        "win_probability": col_win_probability(prob),
     }
 
 def race_rows(race, version="v8"):
-    """All output rows for a race under the given model version."""
-    kind, res, conf = analyze(race, version)
-    if not res:
-        return []
-    probs = win_probabilities([entry[1] for entry in res])
-    picks = [Pick(rank, entry[0], entry[1], prob)
-             for rank, (entry, prob) in enumerate(zip(res, probs), 1)]
-    return [build_row(race, version, kind, pick, conf) for pick in picks]
+    kind, res = score_race(race, version)
+    probs = win_probabilities([tot for _, tot, _, _ in res])
+    return [build_row(race, version, kind, i, name, tot, prob)
+            for i, ((name, tot, _parts, _tags), prob) in enumerate(zip(res, probs), 1)]
 
 def to_json(race, version="v8", indent=2):
-    """The race's output rows as a JSON string."""
     return json.dumps(race_rows(race, version), indent=indent)
 
-def main(argv):
-    """CLI entry point: JSON rows by default, printed table with --text."""
-    paths = [a for a in argv if not a.startswith("--")]
-    if paths:
-        with open(paths[0], encoding="utf-8") as fh:
-            race = json.load(fh)
-    else:
-        race = DEMO
-    version = "v9" if "--v9" in argv else "v8"
-    if "--text" in argv:      # human-readable table
-        show(race, version)
-    else:                     # default: JSON rows for SQL
-        print(to_json(race, version))
-
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    race = json.load(open(args[0])) if args else DEMO
+    version = "v9" if "--v9" in sys.argv else "v8"
+    if "--text" in sys.argv:      # old human-readable table
+        show(race, version)
+    else:                         # default: JSON rows for SQL
+        print(to_json(race, version))
+        

@@ -13,7 +13,6 @@ app = Flask(
 
 
 @app.route("/")
-# is this a builtin for flask?
 def index():
     return render_template("index.html")
 
@@ -21,5 +20,4 @@ def index():
 # Main Application
 if __name__ == "__main__":
     # TODO: CLI Arguments for DB input
-    appdb = db.RacerDB(sys.argv[0] or "racer.db")
-    app.run(host="0.0.0.0", port=5000, debug=True)  # Don't use like this in prod
+    app.run(host="0.0.0.0")  # Don't use like this in prod
