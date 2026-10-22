@@ -30,11 +30,14 @@ Optional per-horse flags: "scratched": true, "duel": true/false, "lone": true.
 import json
 import math
 import sys
+from functools import partial
+from typing import NamedTuple
 
 # --------------------------------------------------------------------------
 # Rank -> points tables
 # --------------------------------------------------------------------------
 def tbl(d, default):
+    """Build a rank -> points lookup from dict d, falling back to default."""
     return lambda r: d.get(r, default)
 
 ROUTE = {  # v8, /100
@@ -93,7 +96,12 @@ def ranks(horses, key):
     vals = [(h.get(key) or 0) for h in horses]
     return [1 + sum(v2 > v for v2 in vals) for v in vals]
 
-def market_pts(pl, top):  # top = max points for market/workout factor
+def rank_of(horse, all_ranks, i, key):
+    """Rank of horse i for metric key: manual override first, else computed."""
+    return horse.get("ranks", {}).get(key, all_ranks[key][i])
+
+def market_pts(pl, top):
+    """Points from the odds (pl); top = max points for the market/workout factor."""
     steps = [(2, 1.0), (3, .85), (5, .75), (8, .6), (12, .45), (20, .3)]
     for lim, frac in steps:
         if pl <= lim:
@@ -101,6 +109,7 @@ def market_pts(pl, top):  # top = max points for market/workout factor
     return round(top * .1)
 
 def trainer_pts(name, mx):
+    """Trainer points: tier fraction (default .7 if unknown) of the max mx."""
     return round(mx * TRAINER_TIER.get((name or "").lower(), .7))
 
 def pace_scenario(horses):
@@ -119,12 +128,13 @@ def pace_scenario(horses):
 # Scorers
 # --------------------------------------------------------------------------
 def score_route_like(horses, cfg):
+    """Score a route/turf race; returns (name, total, parts, tags) per horse."""
     lone, duel = pace_scenario(horses)
-    R = {k: ranks(horses, k) for k in
-         ("lp", "avgspd", "primepower", "avgdist", "lastclass")}
+    all_ranks = {k: ranks(horses, k) for k in
+                 ("lp", "avgspd", "primepower", "avgdist", "lastclass")}
     out = []
     for i, h in enumerate(horses):
-        r = lambda k: h.get("ranks", {}).get(k, R[k][i])
+        r = partial(rank_of, h, all_ranks, i)
         parts = {
             "lp": cfg["lp"](r("lp")), "class": cfg["cls"](r("primepower")),
             "speed": cfg["spd"](r("avgspd")), "dist": cfg["dist"](r("avgdist")),
@@ -135,32 +145,38 @@ def score_route_like(horses, cfg):
         adj, tags = 0, []
         st = h.get("style", "")
         if st == "P":
-            adj += cfg["presser"]; tags.append("PRESSER")
+            adj += cfg["presser"]
+            tags.append("PRESSER")
         if st == "S":
-            adj += cfg["closer"]; tags.append("CLOSER")
+            adj += cfg["closer"]
+            tags.append("CLOSER")
         is_lone = h.get("lone", h["name"] == lone)
         if is_lone:
-            adj += cfg["lone"]; tags.append("LONE_SPEED")
+            adj += cfg["lone"]
+            tags.append("LONE_SPEED")
         in_duel = h.get("duel", h["name"] in duel)
         if in_duel:
-            adj += cfg["duel"].get(min(len(duel), 3), -3); tags.append("DUEL")
+            adj += cfg["duel"].get(min(len(duel), 3), -3)
+            tags.append("DUEL")
         parts["adj"] = adj
         out.append((h["name"], sum(parts.values()), parts, tags))
     return out
 
 def score_sprint(horses, cfg):
+    """Score a sprint; returns (name, total, parts, tags) per horse."""
     lone, duel = pace_scenario(horses)
-    R = {k: ranks(horses, k) for k in
-         ("lp", "avgspd", "primepower", "lastclass", "bestspd")}
+    all_ranks = {k: ranks(horses, k) for k in
+                 ("lp", "avgspd", "primepower", "lastclass", "bestspd")}
     out = []
     for i, h in enumerate(horses):
-        r = lambda k: h.get("ranks", {}).get(k, R[k][i])
+        r = partial(rank_of, h, all_ranks, i)
         best = cfg["best"].get(r("bestspd"), 0) if h.get("bestspd") else 0
         st = h.get("style", "E/P")
         base = {"E": 12, "E/P": 12, "P": 10, "S": 8}.get(st, 8)
         tags = []
         if st == "P":
-            base += cfg["presser"]; tags.append("PRESSER")
+            base += cfg["presser"]
+            tags.append("PRESSER")
         if best:
             tags.append(f"BESTSPD{r('bestspd')}")
         parts = {
@@ -174,18 +190,22 @@ def score_sprint(horses, cfg):
             "trainer": trainer_pts(h.get("trainer"), cfg["trainer_max"]),
         }
         if h.get("lone", h["name"] == lone):
-            parts["lone"] = 4; tags.append("LONE_SPEED")
+            parts["lone"] = 4
+            tags.append("LONE_SPEED")
         if h.get("duel", h["name"] in duel):
-            parts["duel"] = cfg["duel"].get(min(len(duel), 3), -3); tags.append("DUEL")
+            parts["duel"] = cfg["duel"].get(min(len(duel), 3), -3)
+            tags.append("DUEL")
         out.append((h["name"], sum(parts.values()), parts, tags))
     return out
 
 def pick_formula(distance_f, surface):
+    """Choose the formula: 'turf', 'sprint' (< 8f dirt) or 'route'."""
     if surface == "turf":
         return "turf"
     return "sprint" if distance_f < 8 else "route"
 
 def score_race(race, version="v8"):
+    """Score a race; returns (formula kind, results sorted best-first)."""
     horses = [h for h in race["horses"] if not h.get("scratched")]
     kind = pick_formula(race["distance_f"], race.get("surface", "dirt"))
     v9 = version == "v9"
@@ -276,6 +296,7 @@ def conf_pace(horses):
     return 1.0
 
 def confidence_label(score):
+    """Map a 0-100 confidence score to HIGH / MEDIUM / LOW."""
     if score >= HIGH_CUTOFF:
         return "HIGH"
     if score >= MEDIUM_CUTOFF:
@@ -310,10 +331,11 @@ def analyze(race, version="v8"):
 # Output
 # --------------------------------------------------------------------------
 def show(race, version="v8"):
+    """Print the ranked table and confidence line; returns the results."""
     kind, res, conf = analyze(race, version)
     print(f"\n{race['name']}  |  {kind.upper()} {version}  |  /100")
     print("-" * 64)
-    for i, (name, tot, parts, tags) in enumerate(res, 1):
+    for i, (name, tot, _parts, tags) in enumerate(res, 1):
         print(f"{i:>2}. {name:<18}{tot:>5}   {' '.join(tags)}")
     print(f"Confidence: {conf['score']}/100 ({conf['label']})")
     return res
@@ -321,12 +343,24 @@ def show(race, version="v8"):
 DEMO = {
     "name": "Belmont S. G1", "distance_f": 10, "surface": "dirt",
     "horses": [
-        {"name":"Renegade","pp":4,"pl":2.5,"style":"S","trainer":"Pletcher","ep1":75,"lp":105,"avgspd":97,"avgdist":98,"primepower":150,"lastclass":122},
-        {"name":"Chief Wallabee","pp":3,"pl":4,"style":"P","trainer":"Mott","ep1":77,"lp":103,"avgspd":99,"avgdist":98,"primepower":147,"lastclass":121},
-        {"name":"Golden Tempo","pp":9,"pl":5,"style":"S","trainer":"DeVaux","ep1":75,"lp":103,"avgspd":96,"avgdist":99,"primepower":147,"lastclass":122},
-        {"name":"Commandment","pp":7,"pl":9,"style":"P","trainer":"Cox","ep1":74,"lp":102,"avgspd":98,"avgdist":96,"primepower":148,"lastclass":120},
-        {"name":"Emerging Market","pp":8,"pl":8,"style":"S","trainer":"C.Brown","ep1":95,"lp":87,"avgspd":97,"avgdist":96,"primepower":149,"lastclass":119},
-        {"name":"Vitruvian Man","pp":1,"pl":50,"style":"S","trainer":"O'Neill","ep1":95,"lp":86,"avgspd":84,"avgdist":92,"primepower":130,"lastclass":116},
+        {"name": "Renegade", "pp": 4, "pl": 2.5, "style": "S", "trainer": "Pletcher",
+         "ep1": 75, "lp": 105, "avgspd": 97, "avgdist": 98, "primepower": 150,
+         "lastclass": 122},
+        {"name": "Chief Wallabee", "pp": 3, "pl": 4, "style": "P", "trainer": "Mott",
+         "ep1": 77, "lp": 103, "avgspd": 99, "avgdist": 98, "primepower": 147,
+         "lastclass": 121},
+        {"name": "Golden Tempo", "pp": 9, "pl": 5, "style": "S", "trainer": "DeVaux",
+         "ep1": 75, "lp": 103, "avgspd": 96, "avgdist": 99, "primepower": 147,
+         "lastclass": 122},
+        {"name": "Commandment", "pp": 7, "pl": 9, "style": "P", "trainer": "Cox",
+         "ep1": 74, "lp": 102, "avgspd": 98, "avgdist": 96, "primepower": 148,
+         "lastclass": 120},
+        {"name": "Emerging Market", "pp": 8, "pl": 8, "style": "S", "trainer": "C.Brown",
+         "ep1": 95, "lp": 87, "avgspd": 97, "avgdist": 96, "primepower": 149,
+         "lastclass": 119},
+        {"name": "Vitruvian Man", "pp": 1, "pl": 50, "style": "S", "trainer": "O'Neill",
+         "ep1": 95, "lp": 86, "avgspd": 84, "avgdist": 92, "primepower": 130,
+         "lastclass": 116},
     ],
 }
 
@@ -342,50 +376,88 @@ DEMO = {
 # --------------------------------------------------------------------------
 PROB_TEMPERATURE = 8.0
 
+class Pick(NamedTuple):
+    """One horse's place in a scored race."""
+    rank: int
+    name: str
+    score: float
+    prob: float
+
 def win_probabilities(scores, temp=PROB_TEMPERATURE):
+    """Softmax of the scores at temperature temp; returns probabilities summing to 1."""
     top = max(scores)  # subtract max for numeric stability
     exps = [math.exp((s - top) / temp) for s in scores]
     total = sum(exps)
     return [e / total for e in exps]
 
-def col_win_probability(prob):         return round(prob, 4)
-def col_is_predicted_winner(rank):     return rank == 1
-def col_predicted_rank(rank):          return rank
-def col_confidence_score(conf):        return conf["score"]
-def col_confidence_label(conf):        return conf["label"]
+def col_predicted_rank(pick):
+    """Column: predicted finishing rank (1 = predicted winner)."""
+    return pick.rank
 
-def build_row(race, version, kind, rank, name, score, prob, conf):
+def col_is_predicted_winner(pick):
+    """Column: True for the top-ranked horse."""
+    return pick.rank == 1
+
+def col_score(pick):
+    """Column: total score on the 0-100 scale, one decimal."""
+    return round(pick.score, 1)
+
+def col_win_probability(pick):
+    """Column: softmax win probability, 4 decimals."""
+    return round(pick.prob, 4)
+
+def col_confidence_score(conf):
+    """Column: race-level confidence score (0-100)."""
+    return conf["score"]
+
+def col_confidence_label(conf):
+    """Column: race-level confidence label (HIGH / MEDIUM / LOW)."""
+    return conf["label"]
+
+def build_row(race, version, kind, pick, conf):
+    """Build one flat output row for a horse."""
     return {
         "race_name": race["name"],
         "distance_f": race["distance_f"],
         "surface": race.get("surface", "dirt"),
         "formula": kind,
         "version": version,
-        "horse": name,
-        "predicted_rank": col_predicted_rank(rank),
-        "is_predicted_winner": col_is_predicted_winner(rank),
-        "score": round(score, 1),
-        "win_probability": col_win_probability(prob),
+        "horse": pick.name,
+        "predicted_rank": col_predicted_rank(pick),
+        "is_predicted_winner": col_is_predicted_winner(pick),
+        "score": col_score(pick),
+        "win_probability": col_win_probability(pick),
         "confidence_score": col_confidence_score(conf),
         "confidence_label": col_confidence_label(conf),
     }
 
 def race_rows(race, version="v8"):
+    """All output rows for a race under the given model version."""
     kind, res, conf = analyze(race, version)
     if not res:
         return []
-    probs = win_probabilities([tot for _, tot, _, _ in res])
-    return [build_row(race, version, kind, i, name, tot, prob, conf)
-            for i, ((name, tot, _parts, _tags), prob) in enumerate(zip(res, probs), 1)]
+    probs = win_probabilities([entry[1] for entry in res])
+    picks = [Pick(rank, entry[0], entry[1], prob)
+             for rank, (entry, prob) in enumerate(zip(res, probs), 1)]
+    return [build_row(race, version, kind, pick, conf) for pick in picks]
 
 def to_json(race, version="v8", indent=2):
+    """The race's output rows as a JSON string."""
     return json.dumps(race_rows(race, version), indent=indent)
 
-if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    race = json.load(open(args[0])) if args else DEMO
-    version = "v9" if "--v9" in sys.argv else "v8"
-    if "--text" in sys.argv:      # old human-readable table
+def main(argv):
+    """CLI entry point: JSON rows by default, printed table with --text."""
+    paths = [a for a in argv if not a.startswith("--")]
+    if paths:
+        with open(paths[0], encoding="utf-8") as fh:
+            race = json.load(fh)
+    else:
+        race = DEMO
+    version = "v9" if "--v9" in argv else "v8"
+    if "--text" in argv:      # human-readable table
         show(race, version)
-    else:                         # default: JSON rows for SQL
+    else:                     # default: JSON rows for SQL
         print(to_json(race, version))
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
