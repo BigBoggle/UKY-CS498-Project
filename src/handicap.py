@@ -3,8 +3,10 @@ Handicapping engine: v8 (locked), v9 (shadow), and PP-sheet derived mode.
 All scores are on a 0-100 scale.
 
 Usage:
-    python handicap.py                    # runs the Belmont S. demo
-    python handicap.py race.json          # scores a race from a JSON file
+    python handicap.py                    # Belmont S. demo -> JSON rows (v8 + v9)
+    python handicap.py race.json          # scores a race from a JSON file -> JSON rows
+    python handicap.py race.json --text   # old printed tables instead of JSON
+    python handicap.py > rows.json        # JSON only on stdout, safe to redirect
 
 Race JSON shape:
 {
@@ -234,7 +236,83 @@ DEMO = {
     ],
 }
 
+# --------------------------------------------------------------------------
+# SQL-friendly JSON output
+# One flat row per (race, version, horse). Every row has the same keys, so the
+# array loads straight into a table (pandas.read_json, sqlite executemany,
+# Postgres json_populate_recordset, etc).
+#   NULL  = component isn't part of that formula (e.g. pts_pace on a route race)
+#   0     = component is part of the formula but didn't fire
+# --------------------------------------------------------------------------
+def col_pts_lp(kind, parts):      return parts.get("lp")
+def col_pts_class(kind, parts):   return parts.get("class")
+def col_pts_speed(kind, parts):   return parts.get("speed")
+def col_pts_dist(kind, parts):    return parts.get("dist")
+def col_pts_form(kind, parts):    return parts.get("form")
+def col_pts_trainer(kind, parts): return parts.get("trainer")
+def col_pts_workout(kind, parts): return parts.get("workout")
+def col_pts_adj(kind, parts):     return parts.get("adj")
+def col_pts_pace(kind, parts):    return parts.get("pace")
+def col_pts_post(kind, parts):    return parts.get("post")
+def col_pts_market(kind, parts):  return parts.get("market")
+def col_pts_style(kind, parts):   return parts.get("style")
+def col_pts_drop(kind, parts):    return parts.get("drop")
+def col_pts_lone(kind, parts):    return parts.get("lone", 0 if kind == "sprint" else None)
+def col_pts_duel(kind, parts):    return parts.get("duel", 0 if kind == "sprint" else None)
+
+def build_row(race, version, kind, rank, name, total, parts, tags, horse, scored_at):
+    return {
+        "race_name": race["name"],
+        "distance_f": race["distance_f"],
+        "surface": race.get("surface", "dirt"),
+        "formula": kind,
+        "version": version,
+        "scored_at": scored_at,
+        "predicted_rank": rank,
+        "horse": name,
+        "score": round(total, 1),
+        "post_position": horse.get("pp"),
+        "morning_line": horse.get("pl"),
+        "run_style": horse.get("style"),
+        "trainer": horse.get("trainer"),
+        "tags": ",".join(tags),
+        "pts_lp": col_pts_lp(kind, parts),
+        "pts_class": col_pts_class(kind, parts),
+        "pts_speed": col_pts_speed(kind, parts),
+        "pts_dist": col_pts_dist(kind, parts),
+        "pts_form": col_pts_form(kind, parts),
+        "pts_trainer": col_pts_trainer(kind, parts),
+        "pts_workout": col_pts_workout(kind, parts),
+        "pts_adj": col_pts_adj(kind, parts),
+        "pts_pace": col_pts_pace(kind, parts),
+        "pts_post": col_pts_post(kind, parts),
+        "pts_market": col_pts_market(kind, parts),
+        "pts_style": col_pts_style(kind, parts),
+        "pts_drop": col_pts_drop(kind, parts),
+        "pts_lone": col_pts_lone(kind, parts),
+        "pts_duel": col_pts_duel(kind, parts),
+    }
+
+def race_rows(race, version, scored_at):
+    kind, res = score_race(race, version)
+    by_name = {h["name"]: h for h in race["horses"]}
+    return [build_row(race, version, kind, i, name, tot, parts, tags,
+                      by_name[name], scored_at)
+            for i, (name, tot, parts, tags) in enumerate(res, 1)]
+
+def to_json(race, versions=("v8", "v9"), indent=2):
+    from datetime import datetime, timezone
+    scored_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows = []
+    for v in versions:
+        rows += race_rows(race, v, scored_at)
+    return json.dumps(rows, indent=indent)
+
 if __name__ == "__main__":
-    race = json.load(open(sys.argv[1])) if len(sys.argv) > 1 else DEMO
-    show(race, "v8")
-    show(race, "v9")  # shadow comparison
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    race = json.load(open(args[0])) if args else DEMO
+    if "--text" in sys.argv:      # old human-readable table
+        show(race, "v8")
+        show(race, "v9")
+    else:                         # default: JSON rows for SQL
+        print(to_json(race))
