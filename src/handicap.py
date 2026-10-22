@@ -24,12 +24,16 @@ a rank). Add e.g. "ranks": {"lp": 2} to a horse to override what the app showed.
 Optional per-horse flags: "scratched": true, "duel": true/false, "lone": true.
 """
 import json
+import math
 import sys
+from functools import partial
+from typing import NamedTuple
 
 # --------------------------------------------------------------------------
 # Rank -> points tables
 # --------------------------------------------------------------------------
 def tbl(d, default):
+    """Build a rank -> points lookup from dict d, falling back to default."""
     return lambda r: d.get(r, default)
 
 ROUTE = {  # v8, /100
@@ -88,7 +92,12 @@ def ranks(horses, key):
     vals = [(h.get(key) or 0) for h in horses]
     return [1 + sum(v2 > v for v2 in vals) for v in vals]
 
-def market_pts(pl, top):  # top = max points for market/workout factor
+def rank_of(horse, all_ranks, i, key):
+    """Rank of horse i for metric key: manual override first, else computed."""
+    return horse.get("ranks", {}).get(key, all_ranks[key][i])
+
+def market_pts(pl, top):
+    """Points from the odds (pl); top = max points for the market/workout factor."""
     steps = [(2, 1.0), (3, .85), (5, .75), (8, .6), (12, .45), (20, .3)]
     for lim, frac in steps:
         if pl <= lim:
@@ -96,6 +105,7 @@ def market_pts(pl, top):  # top = max points for market/workout factor
     return round(top * .1)
 
 def trainer_pts(name, mx):
+    """Trainer points: tier fraction (default .7 if unknown) of the max mx."""
     return round(mx * TRAINER_TIER.get((name or "").lower(), .7))
 
 def pace_scenario(horses):
@@ -114,12 +124,13 @@ def pace_scenario(horses):
 # Scorers
 # --------------------------------------------------------------------------
 def score_route_like(horses, cfg):
+    """Score a route/turf race; returns (name, total, parts, tags) per horse."""
     lone, duel = pace_scenario(horses)
-    R = {k: ranks(horses, k) for k in
-         ("lp", "avgspd", "primepower", "avgdist", "lastclass")}
+    all_ranks = {k: ranks(horses, k) for k in
+                 ("lp", "avgspd", "primepower", "avgdist", "lastclass")}
     out = []
     for i, h in enumerate(horses):
-        r = lambda k: h.get("ranks", {}).get(k, R[k][i])
+        r = partial(rank_of, h, all_ranks, i)
         parts = {
             "lp": cfg["lp"](r("lp")), "class": cfg["cls"](r("primepower")),
             "speed": cfg["spd"](r("avgspd")), "dist": cfg["dist"](r("avgdist")),
@@ -130,32 +141,38 @@ def score_route_like(horses, cfg):
         adj, tags = 0, []
         st = h.get("style", "")
         if st == "P":
-            adj += cfg["presser"]; tags.append("PRESSER")
+            adj += cfg["presser"]
+            tags.append("PRESSER")
         if st == "S":
-            adj += cfg["closer"]; tags.append("CLOSER")
+            adj += cfg["closer"]
+            tags.append("CLOSER")
         is_lone = h.get("lone", h["name"] == lone)
         if is_lone:
-            adj += cfg["lone"]; tags.append("LONE_SPEED")
+            adj += cfg["lone"]
+            tags.append("LONE_SPEED")
         in_duel = h.get("duel", h["name"] in duel)
         if in_duel:
-            adj += cfg["duel"].get(min(len(duel), 3), -3); tags.append("DUEL")
+            adj += cfg["duel"].get(min(len(duel), 3), -3)
+            tags.append("DUEL")
         parts["adj"] = adj
         out.append((h["name"], sum(parts.values()), parts, tags))
     return out
 
 def score_sprint(horses, cfg):
+    """Score a sprint; returns (name, total, parts, tags) per horse."""
     lone, duel = pace_scenario(horses)
-    R = {k: ranks(horses, k) for k in
-         ("lp", "avgspd", "primepower", "lastclass", "bestspd")}
+    all_ranks = {k: ranks(horses, k) for k in
+                 ("lp", "avgspd", "primepower", "lastclass", "bestspd")}
     out = []
     for i, h in enumerate(horses):
-        r = lambda k: h.get("ranks", {}).get(k, R[k][i])
+        r = partial(rank_of, h, all_ranks, i)
         best = cfg["best"].get(r("bestspd"), 0) if h.get("bestspd") else 0
         st = h.get("style", "E/P")
         base = {"E": 12, "E/P": 12, "P": 10, "S": 8}.get(st, 8)
         tags = []
         if st == "P":
-            base += cfg["presser"]; tags.append("PRESSER")
+            base += cfg["presser"]
+            tags.append("PRESSER")
         if best:
             tags.append(f"BESTSPD{r('bestspd')}")
         parts = {
@@ -169,18 +186,22 @@ def score_sprint(horses, cfg):
             "trainer": trainer_pts(h.get("trainer"), cfg["trainer_max"]),
         }
         if h.get("lone", h["name"] == lone):
-            parts["lone"] = 4; tags.append("LONE_SPEED")
+            parts["lone"] = 4
+            tags.append("LONE_SPEED")
         if h.get("duel", h["name"] in duel):
-            parts["duel"] = cfg["duel"].get(min(len(duel), 3), -3); tags.append("DUEL")
+            parts["duel"] = cfg["duel"].get(min(len(duel), 3), -3)
+            tags.append("DUEL")
         out.append((h["name"], sum(parts.values()), parts, tags))
     return out
 
 def pick_formula(distance_f, surface):
+    """Choose the formula: 'turf', 'sprint' (< 8f dirt) or 'route'."""
     if surface == "turf":
         return "turf"
     return "sprint" if distance_f < 8 else "route"
 
 def score_race(race, version="v8"):
+    """Score a race; returns (formula kind, results sorted best-first)."""
     horses = [h for h in race["horses"] if not h.get("scratched")]
     kind = pick_formula(race["distance_f"], race.get("surface", "dirt"))
     v9 = version == "v9"
@@ -214,25 +235,128 @@ def score_pp_sheet(h, route_distance=False):
     return round(s, 1)
 
 # --------------------------------------------------------------------------
+# Race confidence (0-100): how much to trust the top pick
+#   margin     (35)  gap between #1 and #2 totals
+#   agreement  (25)  v8 and v9 agree on the top pick / top three
+#   data       (20)  how many key inputs are actually filled in
+#   field      (10)  smaller fields are more predictable
+#   pace       (10)  a speed duel makes the race shape less certain
+# Each component returns 0.0-1.0 and is weighted so the weights sum to 100.
+# Thresholds are starting guesses.
+# --------------------------------------------------------------------------
+W_MARGIN, W_AGREEMENT, W_DATA, W_FIELD, W_PACE = 35, 25, 20, 10, 10
+
+MARGIN_FULL = 10.0                # point gap at which margin confidence maxes out
+FIELD_SMALL, FIELD_BIG = 6, 14    # field size: <=6 full confidence, >=14 floor
+FIELD_FLOOR = 0.4
+DUEL2_CONF, DUEL3_CONF = 0.7, 0.4
+HIGH_CUTOFF, MEDIUM_CUTOFF = 70, 45
+
+# Inputs the scorers read; a missing one silently counts as 0 or a default.
+DATA_FIELDS = ("ep1", "lp", "avgspd", "avgdist", "primepower",
+               "lastclass", "pl", "trainer")
+
+def conf_margin(res):
+    """Gap between the top two totals, scaled so MARGIN_FULL points = 1.0."""
+    if len(res) < 2:
+        return 1.0
+    return min((res[0][1] - res[1][1]) / MARGIN_FULL, 1.0)
+
+def conf_agreement(res, res_other):
+    """60% weight on same top pick, 40% on top-three overlap between versions."""
+    same_top = 1.0 if res[0][0] == res_other[0][0] else 0.0
+    overlap = len({r[0] for r in res[:3]} & {r[0] for r in res_other[:3]}) / min(3, len(res))
+    return 0.6 * same_top + 0.4 * overlap
+
+def conf_data(horses):
+    """Fraction of DATA_FIELDS present across all running horses."""
+    present = sum(1 for h in horses for f in DATA_FIELDS if h.get(f) is not None)
+    return present / (len(horses) * len(DATA_FIELDS))
+
+def conf_field(n_horses):
+    """1.0 for small fields, sliding linearly down to FIELD_FLOOR for big ones."""
+    if n_horses <= FIELD_SMALL:
+        return 1.0
+    if n_horses >= FIELD_BIG:
+        return FIELD_FLOOR
+    slide = (n_horses - FIELD_SMALL) / (FIELD_BIG - FIELD_SMALL)
+    return 1.0 - (1.0 - FIELD_FLOOR) * slide
+
+def conf_pace(horses):
+    """Lone speed or no speed = clean pace picture; duels add uncertainty."""
+    _, duel = pace_scenario(horses)
+    if len(duel) >= 3:
+        return DUEL3_CONF
+    if len(duel) == 2:
+        return DUEL2_CONF
+    return 1.0
+
+def confidence_label(score):
+    """Map a 0-100 confidence score to HIGH / MEDIUM / LOW."""
+    if score >= HIGH_CUTOFF:
+        return "HIGH"
+    if score >= MEDIUM_CUTOFF:
+        return "MEDIUM"
+    return "LOW"
+
+def race_confidence(race, res, res_other):
+    """res = ranked results for the version being reported, res_other = the other
+    version (for the agreement check). Returns score, label and each component."""
+    horses = [h for h in race["horses"] if not h.get("scratched")]
+    parts = {
+        "margin": conf_margin(res),
+        "agreement": conf_agreement(res, res_other),
+        "data": conf_data(horses),
+        "field": conf_field(len(horses)),
+        "pace": conf_pace(horses),
+    }
+    score = round(W_MARGIN * parts["margin"] + W_AGREEMENT * parts["agreement"]
+                  + W_DATA * parts["data"] + W_FIELD * parts["field"]
+                  + W_PACE * parts["pace"])
+    return {"score": score, "label": confidence_label(score), "components": parts}
+
+def analyze(race, version="v8"):
+    """Score the race under `version` and the other version; returns
+    (formula kind, ranked results, confidence dict)."""
+    other = "v9" if version == "v8" else "v8"
+    kind, res = score_race(race, version)
+    _, res_other = score_race(race, other)
+    return kind, res, race_confidence(race, res, res_other)
+
+# --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
 def show(race, version="v8"):
-    kind, res = score_race(race, version)
+    """Print the ranked table and confidence line; returns the results."""
+    kind, res, conf = analyze(race, version)
     print(f"\n{race['name']}  |  {kind.upper()} {version}  |  /100")
     print("-" * 64)
-    for i, (name, tot, parts, tags) in enumerate(res, 1):
+    for i, (name, tot, _parts, tags) in enumerate(res, 1):
         print(f"{i:>2}. {name:<18}{tot:>5}   {' '.join(tags)}")
+    print(f"Confidence: {conf['score']}/100 ({conf['label']})")
     return res
 
 DEMO = {
     "name": "Belmont S. G1", "distance_f": 10, "surface": "dirt",
     "horses": [
-        {"name":"Renegade","pp":4,"pl":2.5,"style":"S","trainer":"Pletcher","ep1":75,"lp":105,"avgspd":97,"avgdist":98,"primepower":150,"lastclass":122},
-        {"name":"Chief Wallabee","pp":3,"pl":4,"style":"P","trainer":"Mott","ep1":77,"lp":103,"avgspd":99,"avgdist":98,"primepower":147,"lastclass":121},
-        {"name":"Golden Tempo","pp":9,"pl":5,"style":"S","trainer":"DeVaux","ep1":75,"lp":103,"avgspd":96,"avgdist":99,"primepower":147,"lastclass":122},
-        {"name":"Commandment","pp":7,"pl":9,"style":"P","trainer":"Cox","ep1":74,"lp":102,"avgspd":98,"avgdist":96,"primepower":148,"lastclass":120},
-        {"name":"Emerging Market","pp":8,"pl":8,"style":"S","trainer":"C.Brown","ep1":95,"lp":87,"avgspd":97,"avgdist":96,"primepower":149,"lastclass":119},
-        {"name":"Vitruvian Man","pp":1,"pl":50,"style":"S","trainer":"O'Neill","ep1":95,"lp":86,"avgspd":84,"avgdist":92,"primepower":130,"lastclass":116},
+        {"name": "Renegade", "pp": 4, "pl": 2.5, "style": "S", "trainer": "Pletcher",
+         "ep1": 75, "lp": 105, "avgspd": 97, "avgdist": 98, "primepower": 150,
+         "lastclass": 122},
+        {"name": "Chief Wallabee", "pp": 3, "pl": 4, "style": "P", "trainer": "Mott",
+         "ep1": 77, "lp": 103, "avgspd": 99, "avgdist": 98, "primepower": 147,
+         "lastclass": 121},
+        {"name": "Golden Tempo", "pp": 9, "pl": 5, "style": "S", "trainer": "DeVaux",
+         "ep1": 75, "lp": 103, "avgspd": 96, "avgdist": 99, "primepower": 147,
+         "lastclass": 122},
+        {"name": "Commandment", "pp": 7, "pl": 9, "style": "P", "trainer": "Cox",
+         "ep1": 74, "lp": 102, "avgspd": 98, "avgdist": 96, "primepower": 148,
+         "lastclass": 120},
+        {"name": "Emerging Market", "pp": 8, "pl": 8, "style": "S", "trainer": "C.Brown",
+         "ep1": 95, "lp": 87, "avgspd": 97, "avgdist": 96, "primepower": 149,
+         "lastclass": 119},
+        {"name": "Vitruvian Man", "pp": 1, "pl": 50, "style": "S", "trainer": "O'Neill",
+         "ep1": 95, "lp": 86, "avgspd": 84, "avgdist": 92, "primepower": 130,
+         "lastclass": 116},
     ],
 }
 
