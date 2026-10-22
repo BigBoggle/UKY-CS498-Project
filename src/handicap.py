@@ -3,8 +3,10 @@ Handicapping engine: v8 (locked), v9 (shadow), and PP-sheet derived mode.
 All scores are on a 0-100 scale.
 
 Usage:
-    python handicap.py                    # runs the Belmont S. demo
-    python handicap.py race.json          # scores a race from a JSON file
+    python handicap.py                    # Belmont S. demo -> JSON (v8)
+    python handicap.py race.json          # scores a race from a JSON file -> JSON
+    python handicap.py race.json --v9     # same, using the v9 shadow model
+    python handicap.py race.json --text   # old printed table instead of JSON
 
 Race JSON shape:
 {
@@ -234,7 +236,59 @@ DEMO = {
     ],
 }
 
+# --------------------------------------------------------------------------
+# SQL-friendly JSON output: winner + win probability per horse
+# One flat row per horse. Same keys on every row.
+#
+# win_probability is a softmax over the 0-100 scores:
+#     p_i = exp(score_i / T) / sum_j exp(score_j / T)
+# T = PROB_TEMPERATURE. Smaller T -> favorite gets a bigger share.
+# NOTE: this is a heuristic conversion, NOT a calibrated probability. To make it
+# honest, fit T against past results (pick T that minimizes log-loss).
+# --------------------------------------------------------------------------
+import math
+
+PROB_TEMPERATURE = 8.0
+
+def win_probabilities(scores, temp=PROB_TEMPERATURE):
+    top = max(scores)  # subtract max for numeric stability
+    exps = [math.exp((s - top) / temp) for s in scores]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+def col_win_probability(prob):         return round(prob, 4)
+def col_is_predicted_winner(rank):     return rank == 1
+def col_predicted_rank(rank):          return rank
+
+def build_row(race, version, kind, rank, name, score, prob):
+    return {
+        "race_name": race["name"],
+        "distance_f": race["distance_f"],
+        "surface": race.get("surface", "dirt"),
+        "formula": kind,
+        "version": version,
+        "horse": name,
+        "predicted_rank": col_predicted_rank(rank),
+        "is_predicted_winner": col_is_predicted_winner(rank),
+        "score": round(score, 1),
+        "win_probability": col_win_probability(prob),
+    }
+
+def race_rows(race, version="v8"):
+    kind, res = score_race(race, version)
+    probs = win_probabilities([tot for _, tot, _, _ in res])
+    return [build_row(race, version, kind, i, name, tot, prob)
+            for i, ((name, tot, _parts, _tags), prob) in enumerate(zip(res, probs), 1)]
+
+def to_json(race, version="v8", indent=2):
+    return json.dumps(race_rows(race, version), indent=indent)
+
 if __name__ == "__main__":
-    race = json.load(open(sys.argv[1])) if len(sys.argv) > 1 else DEMO
-    show(race, "v8")
-    show(race, "v9")  # shadow comparison
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    race = json.load(open(args[0])) if args else DEMO
+    version = "v9" if "--v9" in sys.argv else "v8"
+    if "--text" in sys.argv:      # old human-readable table
+        show(race, version)
+    else:                         # default: JSON rows for SQL
+        print(to_json(race, version))
+        
