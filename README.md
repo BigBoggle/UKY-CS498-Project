@@ -5,7 +5,8 @@ Project Members:
 - Jace Bennett
 - Jameson Wells
 - Andrew Hostettler
-- Nathan Herrington 
+- Nathan Herrington
+- 
 
 ## Environment Setup
 
