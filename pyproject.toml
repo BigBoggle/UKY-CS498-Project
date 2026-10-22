@@ -6,5 +6,5 @@ requires-python = ">=3.11"
 
 dependencies = [
     "flask>=3.1,<4",
-    "sqlalchemy>=2.0",
+    "flask-sqlalchemy>=3.1,<4",
 ]
