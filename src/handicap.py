@@ -3,9 +3,10 @@ Handicapping engine: v8 (locked), v9 (shadow), and PP-sheet derived mode.
 All scores are on a 0-100 scale.
 
 Usage:
-    python handicap.py                    # Belmont S. demo -> JSON (v8)
-    python handicap.py race.json          # scores a race from a JSON file -> JSON
+    python handicap.py                    # Belmont S. demo -> handicap_output.json (v8)
+    python handicap.py race.json          # scores a race from a JSON file -> handicap_output.json
     python handicap.py race.json --v9     # same, using the v9 shadow model
+    python handicap.py race.json --out picks.json   # write the JSON to a path of your choosing
     python handicap.py race.json --text   # printed table + confidence instead of JSON
 
 Each output row also carries a race-level confidence score (0-100) and label
@@ -445,19 +446,44 @@ def to_json(race, version="v8", indent=2):
     """The race's output rows as a JSON string."""
     return json.dumps(race_rows(race, version), indent=indent)
 
+DEFAULT_OUTPUT = "handicap_output.json"
+
+def write_json(race, version, path):
+    """Write the race's output rows to path as JSON; returns the row count."""
+    rows = race_rows(race, version)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(rows, fh, indent=2)
+        fh.write("\n")
+    return len(rows)
+
+def parse_args(argv):
+    """Split argv into (race json path or None, output path, version, text flag)."""
+    out = DEFAULT_OUTPUT
+    paths = []
+    args = iter(argv)
+    for a in args:
+        if a == "--out":
+            out = next(args, None)
+            if not out:
+                sys.exit("--out needs a file path")
+        elif not a.startswith("--"):
+            paths.append(a)
+    version = "v9" if "--v9" in argv else "v8"
+    return (paths[0] if paths else None), out, version, "--text" in argv
+
 def main(argv):
-    """CLI entry point: JSON rows by default, printed table with --text."""
-    paths = [a for a in argv if not a.startswith("--")]
-    if paths:
-        with open(paths[0], encoding="utf-8") as fh:
+    """CLI entry point: JSON rows to a file by default, printed table with --text."""
+    race_path, out, version, text = parse_args(argv)
+    if race_path:
+        with open(race_path, encoding="utf-8") as fh:
             race = json.load(fh)
     else:
         race = DEMO
-    version = "v9" if "--v9" in argv else "v8"
-    if "--text" in argv:      # human-readable table
+    if text:                  # human-readable table
         show(race, version)
-    else:                     # default: JSON rows for SQL
-        print(to_json(race, version))
+    else:                     # default: JSON rows for SQL, written to a file
+        n = write_json(race, version, out)
+        print(f"Wrote {n} rows to {out}")
 
 if __name__ == "__main__":
     main(sys.argv[1:])
