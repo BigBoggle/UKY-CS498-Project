@@ -269,3 +269,6 @@ flycheck_*.el
 .direnv/
 # undo-tree
 *.~undo-tree~
+
+# Hidden Files
+.DS_Store
